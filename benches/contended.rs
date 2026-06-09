@@ -15,15 +15,15 @@
 //!
 //! ## Measuring nanoseconds while isolating scheduler noise
 //!
-//! * **Per-op cost is per-thread CPU time** (`CLOCK_THREAD_CPUTIME_ID`), not
+//! * **Per-op cost is per-thread CPU time** (`cpu_time::ThreadTime`, which uses
+//!   `CLOCK_THREAD_CPUTIME_ID` on Unix and `GetThreadTimes` on Windows), not
 //!   wall time: it counts cycles the thread actually ran (including CAS-retry
 //!   and cache-miss stalls — real cost) but excludes OS preemption under
-//!   oversubscription (noise). One clock read per thread amortizes the syscall.
+//!   oversubscription (noise). One clock read per thread amortizes the call.
 //! * **Tail** (p99/p999/max) uses wall-clock per-op timing.
 //! * Warmup + median-of-`TRIALS`, fresh sink each trial.
 //!
-//! Uses one `unsafe` call (`libc::clock_gettime`) and writes to stdout.
-#![allow(unsafe_code)]
+//! Writes results to stdout.
 #![allow(clippy::print_stdout)]
 
 #[path = "support/mod.rs"]
@@ -32,6 +32,7 @@ mod support;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
+use cpu_time::ThreadTime;
 use sharded_sink::{ShardSelection, ShardedSink, SinkAction, SinkConfig, WorkStealing};
 use support::{ArrayQueueSink, MutexVecSink, TelemetryEvent, percentile};
 
@@ -47,19 +48,6 @@ fn items_per_producer() -> usize {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(20_000)
-}
-
-fn thread_cpu_ns() -> u64 {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `ts` is a valid, owned, properly-aligned `timespec`; only read on success.
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
-    if rc != 0 {
-        return 0;
-    }
-    (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
 }
 
 /// No-op drain: workers poll and pull, but burst-sized rings make draining a
@@ -106,14 +94,14 @@ where
                         let _ = black_box(push(black_box(TelemetryEvent::sample(i as u64))));
                     }
                     let mut accepted = 0_u64;
-                    let cpu_start = thread_cpu_ns();
+                    let cpu_start = ThreadTime::now();
                     for i in 0..per {
                         let ev = TelemetryEvent::sample(((t as u64) << 40) | (warmup + i) as u64);
                         if black_box(push(black_box(ev))) {
                             accepted += 1;
                         }
                     }
-                    let cpu_ns = thread_cpu_ns().saturating_sub(cpu_start) as f64 / per as f64;
+                    let cpu_ns = cpu_start.elapsed().as_nanos() as f64 / per as f64;
                     (cpu_ns, accepted)
                 })
             })

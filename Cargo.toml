@@ -33,7 +33,7 @@ metrics = { version = "0.24", optional = true }
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "test-util"] }
 criterion = { version = "0.5", features = ["async_tokio"] }
-libc = "0.2"
+cpu-time = "1"
 
 [[bench]]
 name = "uncontended"
