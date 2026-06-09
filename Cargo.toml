@@ -12,7 +12,7 @@ documentation = "https://docs.rs/sharded-sink"
 readme = "README.md"
 keywords = ["telemetry", "sink", "mpsc", "sharded", "fan-in"]
 categories = ["asynchronous", "concurrency"]
-exclude = ["/.github", "/SHARDED_SINK_CRATE_DESIGN_REVISED.md"]
+exclude = ["/.github"]
 autobenches = false
 
 [features]
