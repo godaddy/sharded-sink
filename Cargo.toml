@@ -24,6 +24,7 @@ metrics = ["dep:metrics"]
 [dependencies]
 crossbeam-queue = "0.3"
 crossbeam-utils = "0.8"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tokio = { version = "1", default-features = false, features = ["rt", "sync", "time", "macros"] }
 tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false, features = ["std"] }

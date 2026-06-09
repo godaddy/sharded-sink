@@ -8,15 +8,46 @@
 //!
 //! `crossbeam_queue::ArrayQueue` is MPMC, so concurrent `pop` from multiple
 //! workers is safe — drain-side stealing across shards is sound.
+//!
+//! Two robustness properties of the loop:
+//!
+//! - **Cooperative yield.** A worker yields to the runtime after every drained
+//!   batch, so a `SinkAction` that does not itself await (a synchronous or
+//!   immediately-ready drain) on a continuously-busy shard cannot monopolize a
+//!   runtime worker thread and starve co-located tasks.
+//! - **Panic isolation.** A panic inside `SinkAction::drain` is caught; the
+//!   offending batch is dropped and logged, and the worker keeps draining that
+//!   shard rather than dying and wedging it. (Requires the standard unwinding
+//!   panic strategy; under `panic = "abort"` the process aborts regardless.)
 
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_queue::ArrayQueue;
+use futures_util::future::FutureExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::NormalizedWorkStealing;
 use crate::sink::SinkAction;
+
+/// Hand `buf` to the sink action, catching a panic so one bad batch cannot kill
+/// the shard's worker, then clear the buffer. Always clears `buf`.
+async fn run_drain<T, A>(action: &A, buf: &mut Vec<T>)
+where
+    A: SinkAction<T>,
+{
+    if AssertUnwindSafe(action.drain(buf))
+        .catch_unwind()
+        .await
+        .is_err()
+    {
+        tracing::error!(
+            "sharded-sink: SinkAction::drain panicked; dropping the batch and continuing"
+        );
+    }
+    buf.clear();
+}
 
 /// Drain `queue` into `buf` until the batch is full or the ring is empty.
 #[inline]
@@ -133,8 +164,10 @@ pub(crate) async fn run_worker<T, A>(
                 _ = tokio::time::sleep(idle_sleep) => {}
             }
         } else {
-            action.drain(&mut buf).await;
-            buf.clear();
+            run_drain(&*action, &mut buf).await;
+            // Cooperative yield: keep a non-yielding drain on a hot shard from
+            // monopolizing this runtime worker thread.
+            tokio::task::yield_now().await;
         }
     }
 
@@ -146,8 +179,8 @@ pub(crate) async fn run_worker<T, A>(
         if buf.is_empty() {
             break;
         }
-        action.drain(&mut buf).await;
-        buf.clear();
+        run_drain(&*action, &mut buf).await;
+        tokio::task::yield_now().await;
     }
 }
 

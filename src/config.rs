@@ -9,6 +9,7 @@ use std::time::Duration;
 /// There is no random shard issuance. Selection is driven by deterministic,
 /// thread-local state initialized once per OS thread.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ShardSelection {
     /// Stable home shard per runtime worker thread.
     ///
@@ -28,6 +29,7 @@ pub enum ShardSelection {
 ///
 /// Work stealing is strictly drain-side. It never changes the producer hot path.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum WorkStealing {
     /// No work stealing. Each shard is drained only by its home worker.
     Off,
@@ -48,6 +50,7 @@ pub enum WorkStealing {
 
 /// Validation errors returned by [`ShardedSink::try_spawn`](crate::ShardedSink::try_spawn).
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum SinkConfigError {
     /// `name` was empty.
     EmptyName,
@@ -74,7 +77,7 @@ impl std::fmt::Display for SinkConfigError {
             Self::ZeroDrainBatch => "drain_batch must be greater than zero",
             Self::ZeroOverloadInterval => "overload_check_interval must be greater than zero",
             Self::InvalidWorkStealing => "work-stealing budgets must be greater than zero",
-            Self::ZeroIdleSleep => "DrainMode::Poll idle_sleep must be greater than zero",
+            Self::ZeroIdleSleep => "idle_sleep must be greater than zero",
         };
         f.write_str(msg)
     }
@@ -86,7 +89,13 @@ impl std::error::Error for SinkConfigError {}
 ///
 /// Shard count and ring capacity are fixed at construction; there is no dynamic
 /// resharding. See [`SinkConfig::default`] for recommended values.
+///
+/// This struct is `#[non_exhaustive]`: construct it from
+/// [`SinkConfig::default`] and assign the public fields you need
+/// (`let mut cfg = SinkConfig::default(); cfg.shards = 8;`), so adding future
+/// fields stays backward compatible.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SinkConfig {
     /// Stable name used in overload notifications and metrics labels.
     pub name: &'static str,
@@ -96,7 +105,7 @@ pub struct SinkConfig {
     pub ring_capacity: usize,
     /// Maximum items a drain worker batches before calling the sink action.
     pub drain_batch: usize,
-    /// How often the overload monitor samples `dropped_full` counters.
+    /// How often the overload monitor samples the per-shard `dropped` counters.
     pub overload_check_interval: Duration,
     /// Shard-selection strategy for handle-less and issued pushes.
     pub shard_selection: ShardSelection,

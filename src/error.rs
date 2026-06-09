@@ -4,6 +4,7 @@ use std::fmt;
 
 /// Error returned by [`ShardedSink::shutdown`](crate::ShardedSink::shutdown).
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum ShutdownError {
     /// The configured `shutdown_timeout` elapsed before all internal tasks
     /// (drain workers and the overload monitor) finished.
@@ -13,10 +14,14 @@ pub enum ShutdownError {
     /// undrained.
     TimedOut,
 
-    /// One or more internal tasks panicked.
+    /// An internal task panicked.
     ///
-    /// The sink still cancels and joins the remaining tasks, but the panic is
-    /// surfaced so it is not silently swallowed.
+    /// Note that panics *inside* [`SinkAction::drain`](crate::SinkAction::drain)
+    /// are caught per batch and do not terminate the worker, so they do not
+    /// produce this error; it indicates a panic elsewhere in a worker or the
+    /// overload monitor (including a panicking [`OverloadAction`]).
+    ///
+    /// [`OverloadAction`]: crate::OverloadAction
     WorkerPanicked,
 }
 

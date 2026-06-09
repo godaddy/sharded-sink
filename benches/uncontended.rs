@@ -25,17 +25,17 @@ impl SinkAction<TelemetryEvent> for NoopDrain {
 }
 
 fn config() -> SinkConfig {
-    SinkConfig {
-        name: "bench",
-        shards: 4,
-        ring_capacity: 16_384,
-        drain_batch: 256,
-        overload_check_interval: Duration::from_secs(3600),
-        shard_selection: ShardSelection::ThreadLocalRoundRobin,
-        idle_sleep: Duration::from_micros(100),
-        work_stealing: WorkStealing::Off,
-        shutdown_timeout: Some(Duration::from_secs(5)),
-    }
+    let mut c = SinkConfig::default();
+    c.name = "bench";
+    c.shards = 4;
+    c.ring_capacity = 16_384;
+    c.drain_batch = 256;
+    c.overload_check_interval = Duration::from_secs(3600);
+    c.shard_selection = ShardSelection::ThreadLocalRoundRobin;
+    c.idle_sleep = Duration::from_micros(100);
+    c.work_stealing = WorkStealing::Off;
+    c.shutdown_timeout = Some(Duration::from_secs(5));
+    c
 }
 
 fn bench_uncontended(c: &mut Criterion) {

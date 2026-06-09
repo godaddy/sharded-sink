@@ -67,6 +67,12 @@
 //! dropping producer handles before calling [`shutdown`](ShardedSink::shutdown).
 //! Pushes racing with shutdown are outside the graceful-delivery contract.
 //!
+//! # Runtime requirement
+//!
+//! Spawn the sink on a Tokio runtime with the **time driver** enabled
+//! (`enable_all`/`enable_time`): drain workers, the overload monitor, and
+//! shutdown all use Tokio timers.
+//!
 //! # Behavioral contract
 //!
 //! 1. Producer push never awaits.
@@ -77,6 +83,10 @@
 //!    observed by [`SinkAction::drain`] exactly once.
 //! 6. Producer-quiesced shutdown drains visible buffered items.
 //! 7. Racing shutdown is explicitly lossy (a late push may sit undrained).
+//! 8. A drain worker yields after every batch, so a non-awaiting `SinkAction`
+//!    cannot starve the runtime.
+//! 9. A panic in [`SinkAction::drain`] is caught: the batch is dropped and the
+//!    worker keeps draining its shard.
 
 mod config;
 mod error;

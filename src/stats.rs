@@ -6,6 +6,7 @@
 
 /// Aggregate drop statistics across all shards.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SinkStats {
     /// Number of shards.
     pub shards: usize,
@@ -15,6 +16,7 @@ pub struct SinkStats {
 
 /// Per-shard drop statistics.
 #[derive(Debug, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ShardStats {
     /// Shard index.
     pub shard: usize,

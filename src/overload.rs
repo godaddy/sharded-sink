@@ -8,6 +8,7 @@ use std::time::Duration;
 /// generic over the item type; overload notifications describe sink health, not
 /// individual payloads.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct Overloaded<'sink> {
     /// The sink's configured name.
     pub sink: &'sink str,

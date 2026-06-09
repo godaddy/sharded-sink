@@ -3,25 +3,27 @@
 mod common;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use common::{CollectDrain, Ev, GateDrain, RecordingOverload};
+use common::{CollectDrain, Ev, FeedingDrain, GateDrain, PanicOnceDrain, RecordingOverload};
 use sharded_sink::{
     LogErrorOverload, ShardSelection, ShardedSink, SinkConfig, SinkConfigError, WorkStealing,
 };
 
 fn cfg(shards: usize, ring_capacity: usize, drain_batch: usize) -> SinkConfig {
-    SinkConfig {
-        name: "test",
-        shards,
-        ring_capacity,
-        drain_batch,
-        overload_check_interval: Duration::from_millis(50),
-        shard_selection: ShardSelection::ThreadLocalRoundRobin,
-        idle_sleep: Duration::from_micros(50),
-        work_stealing: WorkStealing::Off,
-        shutdown_timeout: Some(Duration::from_secs(5)),
-    }
+    // SinkConfig is #[non_exhaustive]: build from Default, then assign fields.
+    let mut c = SinkConfig::default();
+    c.name = "test";
+    c.shards = shards;
+    c.ring_capacity = ring_capacity;
+    c.drain_batch = drain_batch;
+    c.overload_check_interval = Duration::from_millis(50);
+    c.shard_selection = ShardSelection::ThreadLocalRoundRobin;
+    c.idle_sleep = Duration::from_micros(50);
+    c.work_stealing = WorkStealing::Off;
+    c.shutdown_timeout = Some(Duration::from_secs(5));
+    c
 }
 
 // ---- push acceptance ---------------------------------------------------------
@@ -261,10 +263,8 @@ async fn drops_trigger_overload_once_per_positive_delta_tick() {
 
 #[tokio::test]
 async fn try_spawn_rejects_invalid_config() {
-    let bad = SinkConfig {
-        shards: 0,
-        ..cfg(1, 16, 4)
-    };
+    let mut bad = cfg(1, 16, 4);
+    bad.shards = 0;
     let result = ShardedSink::<Ev>::try_spawn(
         bad,
         Arc::new(CollectDrain::new()),
@@ -304,4 +304,82 @@ async fn work_stealing_drains_skewed_load_without_loss() {
     ids.sort_unstable();
     ids.dedup();
     assert_eq!(ids.len() as u64, accepted);
+}
+
+// ---- runtime fairness / panic isolation --------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn nonyielding_drain_does_not_starve_the_runtime() {
+    // One shard, on a runtime with a single worker thread. The drain never
+    // awaits and re-feeds what it drains, so the shard is *deterministically*
+    // never empty and the worker stays on the busy path. A canary task enqueued
+    // after the worker is busy must still get scheduled on that one worker
+    // thread — which only happens if the drain worker yields between batches.
+    // Without the cooperative yield the worker monopolizes the thread forever
+    // and the canary never runs.
+    let stop = Arc::new(AtomicBool::new(false));
+    let action = Arc::new(FeedingDrain::new(Arc::clone(&stop)));
+    let sink = ShardedSink::spawn_default_overload(cfg(1, 1024, 64), Arc::clone(&action));
+    action.set_handle(sink.issue());
+
+    // Seed the shard so the worker is immediately on the busy path.
+    let seed = sink.issue();
+    for _ in 0..512 {
+        let _ = seed.push(Ev::new(0));
+    }
+
+    // Time with std sleeps, not tokio timers: when the single worker thread is
+    // pegged it can't advance the tokio time driver, so a tokio sleep here would
+    // hang instead of failing cleanly. This test future runs on the block_on
+    // calling thread (not a runtime worker thread), so blocking it is fine — the
+    // worker thread runs independently.
+    std::thread::sleep(Duration::from_millis(100));
+
+    let ran = Arc::new(AtomicBool::new(false));
+    {
+        let ran = Arc::clone(&ran);
+        tokio::spawn(async move { ran.store(true, Ordering::Relaxed) });
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    let scheduled = ran.load(Ordering::Relaxed);
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = sink.shutdown().await;
+    assert!(
+        scheduled,
+        "canary task never ran: a non-yielding drain starved the runtime worker thread"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn panicking_drain_does_not_kill_the_shard() {
+    // The drain panics on its first batch. The panic must be caught so the
+    // worker keeps draining the shard; items pushed afterward must still be
+    // observed, and shutdown must not report WorkerPanicked.
+    let drain = Arc::new(PanicOnceDrain::new());
+    let sink = ShardedSink::spawn_default_overload(cfg(1, 1024, 16), Arc::clone(&drain));
+    let handle = sink.issue();
+
+    // First item -> first drain -> panic (caught), item lost.
+    assert!(handle.push(Ev::new(1)));
+    // Let the worker hit and recover from the panic before pushing more.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(drain.has_panicked(), "the first drain should have panicked");
+
+    // Subsequent items must still be drained -> the shard survived.
+    for i in 2..=50_u64 {
+        assert!(handle.push(Ev::new(i)));
+    }
+
+    let result = sink.shutdown().await;
+    assert_eq!(
+        result,
+        Ok(()),
+        "a caught drain panic must not fail shutdown"
+    );
+    assert!(
+        drain.observed() >= 40,
+        "items pushed after the panic should still be drained, got {}",
+        drain.observed()
+    );
 }

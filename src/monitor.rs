@@ -1,7 +1,7 @@
 //! Overload monitor task.
 //!
-//! Samples only `dropped_full` counters. `dropped_closed` is lifecycle
-//! information and never drives overload notifications.
+//! Samples the per-shard `dropped` counters on a fixed interval and fires the
+//! [`OverloadAction`] whenever the total rose since the last tick.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,13 +17,13 @@ use crate::overload::{OverloadAction, Overloaded};
 pub(crate) async fn run_monitor<O>(
     name: &'static str,
     interval: Duration,
-    full_counters: Vec<Arc<CachePadded<AtomicU64>>>,
+    counters: Vec<Arc<CachePadded<AtomicU64>>>,
     overload: Arc<O>,
     cancel: CancellationToken,
 ) where
     O: OverloadAction,
 {
-    let mut last_full: u64 = 0;
+    let mut last_total: u64 = 0;
     let mut ticker = tokio::time::interval(interval);
     // The first `tick()` resolves immediately; sampling a zero delta then is
     // harmless. Skip missed ticks so a slow scheduler cannot create a burst of
@@ -35,26 +35,26 @@ pub(crate) async fn run_monitor<O>(
             biased;
             () = cancel.cancelled() => break,
             _ = ticker.tick() => {
-                let total_full: u64 = full_counters
+                let total: u64 = counters
                     .iter()
                     .map(|c| c.load(Ordering::Relaxed))
                     .sum();
-                let delta = total_full.saturating_sub(last_full);
+                let delta = total.saturating_sub(last_total);
                 if delta > 0 {
                     overload.on_overload(Overloaded {
                         sink: name,
                         delta_full: delta,
-                        total_full,
+                        total_full: total,
                         interval,
                     });
 
                     #[cfg(feature = "metrics")]
                     {
-                        metrics::counter!("sharded_sink.dropped_full", "sink" => name.to_string())
+                        metrics::counter!("sharded_sink.dropped", "sink" => name.to_string())
                             .increment(delta);
                     }
                 }
-                last_full = total_full;
+                last_total = total;
             }
         }
     }

@@ -12,17 +12,17 @@ use common::{CollectDrain, Ev};
 use sharded_sink::{ShardSelection, ShardedSink, SinkConfig, WorkStealing};
 
 fn cfg(shards: usize, ring_capacity: usize, drain_batch: usize) -> SinkConfig {
-    SinkConfig {
-        name: "prop",
-        shards,
-        ring_capacity,
-        drain_batch,
-        overload_check_interval: Duration::from_secs(3600),
-        shard_selection: ShardSelection::ThreadLocalRoundRobin,
-        idle_sleep: Duration::from_micros(100),
-        work_stealing: WorkStealing::Off,
-        shutdown_timeout: Some(Duration::from_secs(5)),
-    }
+    let mut c = SinkConfig::default();
+    c.name = "prop";
+    c.shards = shards;
+    c.ring_capacity = ring_capacity;
+    c.drain_batch = drain_batch;
+    c.overload_check_interval = Duration::from_secs(3600);
+    c.shard_selection = ShardSelection::ThreadLocalRoundRobin;
+    c.idle_sleep = Duration::from_micros(100);
+    c.work_stealing = WorkStealing::Off;
+    c.shutdown_timeout = Some(Duration::from_secs(5));
+    c
 }
 
 /// `attempted == accepted + rejected` and `rejected == dropped`, with no

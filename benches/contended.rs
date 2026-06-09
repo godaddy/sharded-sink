@@ -229,17 +229,17 @@ fn shard_capacity(producers: usize, per: usize) -> usize {
 }
 
 fn cfg_shards(shards: usize, ring_capacity: usize) -> SinkConfig {
-    SinkConfig {
-        name: "accept",
-        shards,
-        ring_capacity,
-        drain_batch: DRAIN_BATCH,
-        overload_check_interval: Duration::from_secs(3600),
-        shard_selection: ShardSelection::ThreadLocalRoundRobin,
-        idle_sleep: Duration::from_micros(100),
-        work_stealing: WorkStealing::Off,
-        shutdown_timeout: Some(Duration::from_secs(10)),
-    }
+    let mut c = SinkConfig::default();
+    c.name = "accept";
+    c.shards = shards;
+    c.ring_capacity = ring_capacity;
+    c.drain_batch = DRAIN_BATCH;
+    c.overload_check_interval = Duration::from_secs(3600);
+    c.shard_selection = ShardSelection::ThreadLocalRoundRobin;
+    c.idle_sleep = Duration::from_micros(100);
+    c.work_stealing = WorkStealing::Off;
+    c.shutdown_timeout = Some(Duration::from_secs(10));
+    c
 }
 
 fn sharded_config(ring_capacity: usize) -> SinkConfig {

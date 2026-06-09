@@ -70,17 +70,16 @@ impl SinkAction<Ev> for NoopDrain {
 
 #[tokio::test(flavor = "current_thread")]
 async fn push_does_not_allocate_after_warmup() {
-    let cfg = SinkConfig {
-        name: "alloc",
-        shards: 4,
-        ring_capacity: 1024,
-        drain_batch: 64,
-        overload_check_interval: Duration::from_secs(3600),
-        shard_selection: ShardSelection::ThreadLocalRoundRobin,
-        idle_sleep: Duration::from_micros(100),
-        work_stealing: WorkStealing::Off,
-        shutdown_timeout: Some(Duration::from_secs(5)),
-    };
+    let mut cfg = SinkConfig::default();
+    cfg.name = "alloc";
+    cfg.shards = 4;
+    cfg.ring_capacity = 1024;
+    cfg.drain_batch = 64;
+    cfg.overload_check_interval = Duration::from_secs(3600);
+    cfg.shard_selection = ShardSelection::ThreadLocalRoundRobin;
+    cfg.idle_sleep = Duration::from_micros(100);
+    cfg.work_stealing = WorkStealing::Off;
+    cfg.shutdown_timeout = Some(Duration::from_secs(5));
     let sink = ShardedSink::spawn_default_overload(cfg, Arc::new(NoopDrain));
     let handle = sink.issue();
 

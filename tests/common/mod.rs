@@ -6,9 +6,10 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
-use sharded_sink::{OverloadAction, Overloaded, SinkAction};
+use sharded_sink::{OverloadAction, Overloaded, ShardHandle, SinkAction};
 use tokio::sync::Notify;
 
 /// A cheap `Copy` event type matching the intended hot-path payload shape.
@@ -52,13 +53,98 @@ impl SinkAction<Ev> for CollectDrain {
     }
 }
 
+/// A drain action that discards items and never awaits — a *non-yielding*
+/// drain, used to verify the worker yields cooperatively on the busy path.
+#[derive(Debug, Default)]
+pub struct BlackholeDrain;
+
+impl SinkAction<Ev> for BlackholeDrain {
+    async fn drain(&self, _batch: &mut Vec<Ev>) {}
+}
+
+/// A non-yielding drain that re-pushes what it drained (until stopped), keeping
+/// its shard deterministically non-empty so the worker stays on the busy path.
+/// Used to prove the worker yields cooperatively rather than monopolizing the
+/// runtime thread.
+#[derive(Debug)]
+pub struct FeedingDrain {
+    handle: OnceLock<ShardHandle<Ev>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl FeedingDrain {
+    pub fn new(stop: Arc<AtomicBool>) -> Self {
+        Self {
+            handle: OnceLock::new(),
+            stop,
+        }
+    }
+
+    /// Provide the handle used to re-feed; call once after spawning the sink.
+    pub fn set_handle(&self, handle: ShardHandle<Ev>) {
+        // Ignore a second set; drop the surplus handle explicitly.
+        drop(self.handle.set(handle));
+    }
+}
+
+impl SinkAction<Ev> for FeedingDrain {
+    async fn drain(&self, batch: &mut Vec<Ev>) {
+        if !self.stop.load(Ordering::Relaxed)
+            && let Some(h) = self.handle.get()
+        {
+            // Re-feed roughly what we drained to keep the shard non-empty.
+            for _ in 0..batch.len() {
+                let _ = h.push(Ev::new(0));
+            }
+        }
+    }
+}
+
+/// A drain action that panics on its first call, then records items on every
+/// subsequent call. Used to verify a panicking drain does not wedge the shard.
+#[derive(Debug, Default)]
+pub struct PanicOnceDrain {
+    panicked: Arc<AtomicBool>,
+    observed: Arc<Mutex<Vec<Ev>>>,
+}
+
+impl PanicOnceDrain {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether the first-call panic has fired.
+    pub fn has_panicked(&self) -> bool {
+        self.panicked.load(Ordering::SeqCst)
+    }
+
+    /// Items observed after the panic.
+    pub fn observed(&self) -> usize {
+        self.observed.lock().expect("observed lock").len()
+    }
+}
+
+impl SinkAction<Ev> for PanicOnceDrain {
+    // The panic is the whole point of this fixture (testing panic isolation).
+    #[allow(clippy::panic)]
+    async fn drain(&self, batch: &mut Vec<Ev>) {
+        if !self.panicked.swap(true, Ordering::SeqCst) {
+            panic!("PanicOnceDrain: intentional panic on first batch");
+        }
+        self.observed
+            .lock()
+            .expect("observed lock")
+            .extend(batch.iter().copied());
+    }
+}
+
 /// A drain action that blocks on its first call until released, then becomes a
 /// counting no-op. Used to hold items in the rings deterministically.
 #[derive(Debug)]
 pub struct GateDrain {
     entered: Arc<Notify>,
     release: Arc<Notify>,
-    open: Arc<std::sync::atomic::AtomicBool>,
+    open: Arc<AtomicBool>,
     observed: Arc<AtomicUsize>,
 }
 
@@ -66,7 +152,7 @@ impl GateDrain {
     pub fn new() -> (Self, GateControl) {
         let entered = Arc::new(Notify::new());
         let release = Arc::new(Notify::new());
-        let open = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let open = Arc::new(AtomicBool::new(false));
         let observed = Arc::new(AtomicUsize::new(0));
         let drain = Self {
             entered: Arc::clone(&entered),
@@ -99,7 +185,7 @@ impl SinkAction<Ev> for GateDrain {
 pub struct GateControl {
     entered: Arc<Notify>,
     release: Arc<Notify>,
-    open: Arc<std::sync::atomic::AtomicBool>,
+    open: Arc<AtomicBool>,
     observed: Arc<AtomicUsize>,
 }
 

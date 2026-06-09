@@ -30,7 +30,14 @@ use crate::{monitor, worker};
 /// batch after the returned future completes.
 ///
 /// `drain` may perform I/O and await. Slow drain work delays future drains and
-/// can cause full rings, but it never blocks producer tasks.
+/// can cause full rings, but it never blocks producer tasks. A worker yields to
+/// the runtime after every batch, so a `drain` that does not itself await will
+/// not starve the runtime.
+///
+/// A panic inside `drain` is caught per batch: the offending batch is dropped
+/// (and logged via `tracing`) and the worker keeps draining that shard rather
+/// than dying. Implementations should still avoid panicking — a repeatedly
+/// panicking `drain` silently loses every batch.
 pub trait SinkAction<T>: Send + Sync + 'static {
     /// Process one batch of drained items.
     fn drain(&self, batch: &mut Vec<T>) -> impl Future<Output = ()> + Send;
@@ -119,7 +126,10 @@ where
     /// # Panics
     ///
     /// Panics if called outside a Tokio runtime context (workers are spawned
-    /// with [`tokio::spawn`]).
+    /// with [`tokio::spawn`]). The runtime must also have the **time driver**
+    /// enabled (e.g. `enable_all`/`enable_time`): drain workers, the overload
+    /// monitor, and `shutdown` all use Tokio timers and will panic on a runtime
+    /// built without it.
     pub fn try_spawn<A, O>(
         cfg: SinkConfig,
         action: Arc<A>,
@@ -336,6 +346,11 @@ where
     /// producer handles). Pushes racing with shutdown are outside the
     /// graceful-delivery contract; because the queues outlive the workers, a
     /// late push is accepted into a queue but may never be drained.
+    ///
+    /// If producers are *not* quiesced and keep pushing faster than a shard
+    /// drains, that shard's final drain cannot reach empty. With a
+    /// `shutdown_timeout` set, this returns [`ShutdownError::TimedOut`]; with
+    /// `shutdown_timeout: None` it can block indefinitely. Always quiesce first.
     ///
     /// # Errors
     ///
