@@ -1,0 +1,105 @@
+[package]
+name = "sharded-sink"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+description = "A bounded, lossy, sharded fan-in sink with flat producer latency for telemetry and logging firehoses."
+authors = ["GoDaddy"]
+license = "Apache-2.0"
+repository = "https://github.com/godaddy/sharded-sink"
+homepage = "https://github.com/godaddy/sharded-sink"
+documentation = "https://docs.rs/sharded-sink"
+readme = "README.md"
+keywords = ["telemetry", "sink", "mpsc", "sharded", "fan-in"]
+categories = ["asynchronous", "concurrency"]
+exclude = ["/.github", "/SHARDED_SINK_CRATE_DESIGN_REVISED.md"]
+autobenches = false
+
+[features]
+default = []
+# Emit drop/overload metrics from the overload monitor via the `metrics` crate.
+# The producer hot path never emits metrics regardless of this feature.
+metrics = ["dep:metrics"]
+
+[dependencies]
+crossbeam-queue = "0.3"
+crossbeam-utils = "0.8"
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time", "macros"] }
+tokio-util = { version = "0.7", default-features = false }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+metrics = { version = "0.24", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "sync", "time", "macros", "test-util"] }
+criterion = { version = "0.5", features = ["async_tokio"] }
+libc = "0.2"
+
+[[bench]]
+name = "uncontended"
+harness = false
+
+[[bench]]
+name = "contended"
+harness = false
+
+# The lint profile below is the GoDaddy Rust Guild baseline
+# (gdcorp-engineering/rust-lang/lint_rules.toml), copied verbatim.
+[lints.rust]
+unsafe_code = "deny"
+future_incompatible = { level = "deny", priority = -1 }
+ambiguous_negative_literals = "warn"
+closure_returning_async_block = "warn"
+explicit_outlives_requirements = "warn"
+if_let_rescope = "warn"
+impl_trait_overcaptures = "warn"
+impl_trait_redundant_captures = "warn"
+let_underscore_drop = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_debug_implementations = "warn"
+noop_method_call = "warn"
+non_ascii_idents = "warn"
+redundant_lifetimes = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unsafe_attr_outside_unsafe = "warn"
+unused = { level = "warn", priority = -1 }
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+unused_macro_rules = "warn"
+variant_size_differences = "warn"
+
+[lints.clippy]
+default_union_representation = "deny"
+exit = "deny"
+lossy_float_literal = "deny"
+mem_forget = "deny"
+multiple_inherent_impl = "deny"
+mut_mut = "deny"
+ptr_as_ptr = "deny"
+unwrap_in_result = "deny"
+unwrap_used = "deny"
+wildcard_dependencies = "deny"
+dbg_macro = "warn"
+empty_drop = "warn"
+fallible_impl_from = "warn"
+inefficient_to_string = "warn"
+macro_use_imports = "warn"
+match_same_arms = "warn"
+no_effect_underscore_binding = "warn"
+panic = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+same_name_method = "warn"
+single_char_lifetime_names = "warn"
+implicit_clone = "warn"
+trait_duplication_in_bounds = "warn"
+type_repetition_in_bounds = "warn"
+unimplemented = "warn"
+unneeded_field_pattern = "warn"
+unseparated_literal_suffix = "warn"
+used_underscore_binding = "warn"
